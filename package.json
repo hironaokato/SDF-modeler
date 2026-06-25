@@ -2,6 +2,7 @@
   "name": "sdf-modeler",
   "private": true,
   "version": "0.1.0",
+  "author": "Hironao Kato",
   "type": "module",
   "description": "GLB(スキャンメッシュ)をブラウザ上でSDF(符号付き距離場)に変換・可視化するツール",
   "scripts": {
