@@ -9,7 +9,7 @@
 <body>
   <canvas id="view"></canvas>
 
-  <div id="drop-overlay" class="hidden"><div class="drop-inner">GLB / .sdf / .sdfm をドロップ</div></div>
+  <div id="drop-overlay" class="hidden"><div class="drop-inner">GLB / GLTF一式 / .sdf / .sdfm をドロップ</div></div>
   <div id="shader-error" class="hidden"></div>
   <div id="size-popup" class="hidden"></div>
 
@@ -50,7 +50,7 @@
             </label>
           </div>
           <button id="open-btn" class="primary">開く / 取り込み</button>
-          <input id="file-input" type="file" accept=".glb,.gltf,.sdf,.sdfm" hidden multiple />
+          <input id="file-input" type="file" accept=".glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.ktx2,.sdf,.sdfm" hidden multiple />
         </div>
 
         <div class="sec">
@@ -64,14 +64,22 @@
             <label class="ck"><input type="checkbox" id="show-plate" /> プレート200mm</label>
             <label class="ck"><input type="checkbox" id="tile-cull" checked /> タイルカリング(実験)</label>
           </div>
-          <label class="f"><span>グリッド m</span>
-            <input id="grid-cell" type="number" min="0.001" step="0.01" value="0.1" />
+          <label class="f"><span>グリッド mm</span>
+            <input id="grid-cell" type="number" min="0.1" step="10" value="100" />
           </label>
         </div>
 
         <div class="sec">
           <div class="sh">メッシュ / STL</div>
-          <label class="f"><span>倍率 → mm</span><input id="export-scale" type="number" min="0.0001" step="1" value="1000" /></label>
+          <label class="f"><span>1単位 mm</span><input id="export-scale" type="number" min="0.0001" step="1" value="1000" /></label>
+          <label class="f"><span>STL読込単位</span>
+            <select id="stl-unit">
+              <option value="mm" selected>mm</option>
+              <option value="cm">cm (Fusion既定)</option>
+              <option value="m">m</option>
+              <option value="in">inch</option>
+            </select>
+          </label>
           <label class="ck"><input type="checkbox" id="auto-voxel" checked /> ボクセル自動(サイズ連動)</label>
           <label class="f"><span>ボクセル mm</span><input id="voxel-mm" type="number" min="0.01" step="0.1" value="1.0" /></label>
           <div id="mesh-readout" class="hint"></div>
@@ -197,7 +205,7 @@
 
   <!-- 下: ステータスバー -->
   <div id="statusbar">
-    <span id="status">GLB / .sdf / .sdfm をドロップしてください。</span>
+    <span id="status">GLB / GLTF一式 / .sdf / .sdfm をドロップしてください。</span>
     <span id="legend"></span>
   </div>
 

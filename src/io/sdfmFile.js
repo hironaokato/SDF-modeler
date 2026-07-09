@@ -7,7 +7,7 @@ const VERSION = 1;
 
 /**
  * @param {Object} scene
- * @param {Object} scene.grid          {cellSize, unit}
+ * @param {Object} scene.grid          {cellSize, unit, unitScaleMm, stlUnit}
  * @param {Object[]} scene.objects     シリアライズ済みオブジェクト(SdfScene.serialize)
  * @param {Object[]} scene.volumes     VolumeData 配列(距離/色グリッド埋め込み)
  */
@@ -20,6 +20,7 @@ export function encodeSDFM(scene) {
       resolution: v.resolution,
       min: v.min,
       max: v.max,
+      modelBounds: v.modelBounds || null,
       signed: !!v.signed,
       hasColor: !!(v.hasColor && v.color),
       hasMesh: !!(v.mesh && v.mesh.positions),
@@ -58,6 +59,7 @@ export function decodeSDFM(arrayBuffer) {
     if (e.hasColor && e.blobs.color) color = new Uint8Array(slice(e.blobs.color.off, e.blobs.color.len));
     return {
       name: e.name, resolution: e.resolution, min: e.min, max: e.max,
+      modelBounds: e.modelBounds || null,
       signed: e.signed, hasColor: !!color, distance, color,
       mesh: decodeMesh(e, slice),
     };

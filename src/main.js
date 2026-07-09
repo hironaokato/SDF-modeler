@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { SdfScene } from './core/sdfScene.js';
+import { SdfScene, fitVolumeDataBounds } from './core/sdfScene.js';
 import { MAX_OBJECTS } from './core/constants.js';
 import { RaymarchView } from './render/raymarch.js';
 import { SceneGrid } from './ui/sceneGrid.js';
@@ -15,6 +15,27 @@ import { Sculpt } from './sculpt.js';
 import { makeEvaluator, objDistAt } from './core/sdfEval.js';
 
 const $ = (id) => document.getElementById(id);
+const DEFAULT_UNIT_SCALE_MM = 1000; // 1 scene単位 = 1000mm = 1m
+const DEFAULT_PRIMITIVE_SIZE_MM = 100;
+const STL_UNIT_MM = { mm: 1, cm: 10, m: 1000, in: 25.4 };
+
+function inputNumber(v, digits = 3) {
+  if (!Number.isFinite(v)) return '0';
+  const n = Number.parseFloat(v.toFixed(digits));
+  return Object.is(n, -0) ? '0' : String(n);
+}
+function unitScaleMm() {
+  const v = parseFloat($('export-scale')?.value);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_UNIT_SCALE_MM;
+}
+function stlUnit() {
+  const v = $('stl-unit')?.value;
+  return STL_UNIT_MM[v] ? v : 'mm';
+}
+function stlUnitMm() { return STL_UNIT_MM[stlUnit()] || 1; }
+function sceneToMm(v) { return v * unitScaleMm(); }
+function mmToScene(v) { return v / unitScaleMm(); }
+function isLengthParam(param) { return param && param.key !== 'n' && param.key !== 'angDeg'; }
 
 // ---- three セットアップ ----
 const canvas = $('view');
@@ -108,7 +129,7 @@ function plateLabel(text) {
 }
 function updatePlate() {
   plate.clear();
-  const exportScale = parseFloat($('export-scale').value) || 1000; // mm / scene単位
+  const exportScale = unitScaleMm();                              // mm / scene単位
   const s = 200 / exportScale; const h = s / 2;                    // 200mm をscene単位に
   const pts = [[-h, -h], [h, -h], [h, h], [-h, h], [-h, -h]].map((p) => new THREE.Vector3(p[0], 0.0006, p[1]));
   const border = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x4b76c4 }));
@@ -433,7 +454,9 @@ function sampleVolumeData(objs, res, name) {
   const dx = (max[0] - min[0]) / (res - 1), dy = (max[1] - min[1]) / (res - 1), dz = (max[2] - min[2]) / (res - 1);
   let i = 0;
   for (let z = 0; z < res; z++) { const wz = min[2] + z * dz; for (let y = 0; y < res; y++) { const wy = min[1] + y * dy; for (let x = 0; x < res; x++) dist[i++] = f(min[0] + x * dx, wy, wz); } }
-  return { name: name || 'merged', resolution: res, min, max, signed: true, hasColor: false, distance: dist, color: null, mesh: null };
+  const data = { name: name || 'merged', resolution: res, min, max, signed: true, hasColor: false, distance: dist, color: null, mesh: null };
+  fitVolumeDataBounds(data);
+  return data;
 }
 function mergeToVolume(objs, res) {
   const ordered = objs.slice().sort((a, b) => sdfScene.objects.indexOf(a) - sdfScene.objects.indexOf(b));
@@ -449,22 +472,34 @@ function deleteSelected() {
 }
 
 // ---- 初期サイズ ポップアップ(プリミティブ追加直後) ----
-const SIZE_PRESETS = [0.01, 0.1, 0.5, 1, 10, 100];
+const SIZE_PRESETS_MM = [10, 50, 100, 200, 500, 1000];
 function hideSizePopup() { $('size-popup').classList.add('hidden'); }
-function applyInitialSize(obj, size) {
+function setPrimitiveOverallSizeMm(obj, sizeMm, { recordHistory = true, updateUi = true } = {}) {
   const prim = PRIM_BY_KIND.get(obj.kind);
+  const size = mmToScene(sizeMm);
   const base = (prim ? prim.bound(obj.params || {}) * 2 : 1) || 1; // scale=1での概略サイズ(プロキシ箱)
-  obj.node.scale.setScalar(size / base);
+  const factor = size / base;
+  if (prim && prim.params.length) {
+    for (const pr of prim.params) {
+      if (isLengthParam(pr) && Number.isFinite(obj.params[pr.key])) obj.params[pr.key] *= factor;
+    }
+  } else {
+    obj.node.scale.setScalar(factor);
+  }
   obj.node.updateMatrixWorld(true);
-  rebuildProxies(); refreshList(); pushHistory();
+  if (updateUi) { rebuildProxies(); refreshList(); }
+  if (recordHistory) pushHistory();
+}
+function applyDefaultPrimitiveSize(obj) {
+  setPrimitiveOverallSizeMm(obj, DEFAULT_PRIMITIVE_SIZE_MM, { recordHistory: false });
 }
 function showSizePopup(obj) {
   const pop = $('size-popup');
   pop.innerHTML = '<span class="lbl">初期サイズ</span>';
-  SIZE_PRESETS.forEach((s) => {
+  SIZE_PRESETS_MM.forEach((s) => {
     const b = document.createElement('button');
-    b.textContent = s;
-    b.onclick = () => { applyInitialSize(obj, s); hideSizePopup(); };
+    b.textContent = `${s}mm`;
+    b.onclick = () => { setPrimitiveOverallSizeMm(obj, s); hideSizePopup(); };
     pop.appendChild(b);
   });
   camera.updateMatrixWorld();
@@ -604,10 +639,10 @@ function renderProperties() {
     body.appendChild(seg);
 
     const sl = document.createElement('label'); sl.className = 'f';
-    const sp = document.createElement('span'); sp.textContent = 'スムーズ';
+    const sp = document.createElement('span'); sp.textContent = 'スムーズ mm';
     const sr = document.createElement('input');
-    sr.type = 'range'; sr.min = 0; sr.max = 0.5; sr.step = 0.005; sr.value = o.smoothK;
-    sr.oninput = () => { o.smoothK = parseFloat(sr.value); };
+    sr.type = 'range'; sr.min = 0; sr.max = inputNumber(sceneToMm(0.5)); sr.step = inputNumber(sceneToMm(0.005)); sr.value = inputNumber(sceneToMm(o.smoothK));
+    sr.oninput = () => { o.smoothK = mmToScene(parseFloat(sr.value) || 0); };
     sr.onchange = pushHistory;
     sl.append(sp, sr); body.appendChild(sl);
   }
@@ -615,19 +650,25 @@ function renderProperties() {
   // 変換(位置 / 回転° / スケール) — ブーリアンの下
   const tlab = document.createElement('div'); tlab.className = 'sh'; tlab.textContent = '変換';
   body.appendChild(tlab);
-  const xyzRow = (label, read, write, step) => {
+  const xyzRow = (label, read, write, step, opts = {}) => {
     const row = document.createElement('div'); row.className = 'xyz';
     const s = document.createElement('span'); s.textContent = label; row.appendChild(s);
+    const toDisplay = opts.toDisplay || ((v) => v);
+    const fromDisplay = opts.fromDisplay || ((v) => v);
     ['x', 'y', 'z'].forEach((ax) => {
       const i = document.createElement('input');
-      i.type = 'number'; i.step = step; i.value = +read(ax).toFixed(4);
-      i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) { write(ax, v); o.node.updateMatrixWorld(true); } };
+      i.type = 'number'; i.step = step; i.value = inputNumber(toDisplay(read(ax)), opts.digits ?? 4);
+      i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) { write(ax, fromDisplay(v)); o.node.updateMatrixWorld(true); } };
       i.onchange = pushHistory;
       row.appendChild(i);
     });
     body.appendChild(row);
   };
-  xyzRow('位置', (ax) => o.node.position[ax], (ax, v) => { o.node.position[ax] = v; }, 0.01);
+  xyzRow('位置 mm', (ax) => o.node.position[ax], (ax, v) => { o.node.position[ax] = v; }, 1, {
+    toDisplay: sceneToMm,
+    fromDisplay: mmToScene,
+    digits: 3,
+  });
   xyzRow('回転°', (ax) => THREE.MathUtils.radToDeg(o.node.rotation[ax]), (ax, v) => { o.node.rotation[ax] = THREE.MathUtils.degToRad(v); }, 1);
   xyzRow('拡縮', (ax) => o.node.scale[ax], (ax, v) => { o.node.scale[ax] = v || 1e-3; }, 0.01);
 
@@ -638,12 +679,20 @@ function renderProperties() {
       body.appendChild(lab);
       const grid = document.createElement('div'); grid.className = 'g2';
       for (const pr of prim.params) {
+        const lengthValue = isLengthParam(pr);
+        const rawValue = o.params[pr.key] ?? pr.value ?? 0;
+        const displayValue = lengthValue ? sceneToMm(rawValue) : rawValue;
         const l = document.createElement('label'); l.className = 'f';
-        const s = document.createElement('span'); s.textContent = pr.label;
+        const s = document.createElement('span'); s.textContent = lengthValue ? `${pr.label} mm` : pr.label;
         const i = document.createElement('input');
-        i.type = 'number'; i.step = pr.step ?? 0.01; i.value = o.params[pr.key];
-        if (pr.min != null) i.min = pr.min; if (pr.max != null) i.max = pr.max;
-        i.oninput = () => { o.params[pr.key] = parseFloat(i.value); rebuildProxies(); };
+        i.type = 'number'; i.step = lengthValue ? inputNumber(sceneToMm(pr.step ?? 0.01)) : (pr.step ?? 0.01);
+        i.value = inputNumber(displayValue, lengthValue ? 3 : 4);
+        if (pr.min != null) i.min = lengthValue ? inputNumber(Math.min(sceneToMm(pr.min), displayValue)) : pr.min;
+        if (pr.max != null) i.max = lengthValue ? inputNumber(sceneToMm(pr.max)) : pr.max;
+        i.oninput = () => {
+          const v = parseFloat(i.value);
+          if (!isNaN(v)) { o.params[pr.key] = lengthValue ? mmToScene(v) : v; rebuildProxies(); }
+        };
         i.onchange = pushHistory;
         l.append(s, i); grid.appendChild(l);
       }
@@ -665,10 +714,21 @@ function renderProperties() {
   const arrRow = (label, fields) => {
     const row = document.createElement('div'); row.className = 'xyz';
     const s = document.createElement('span'); s.textContent = label; row.appendChild(s);
-    fields.forEach(({ key, step, min, int }) => {
-      const i = document.createElement('input'); i.type = 'number'; i.step = step; if (min != null) i.min = min;
-      i.value = o.array[key];
-      i.oninput = () => { let v = parseFloat(i.value); if (!isNaN(v)) { if (int) v = Math.max(min || 1, Math.round(v)); o.array[key] = v; rebuildProxies(); } };
+    fields.forEach(({ key, step, min, int, length }) => {
+      const i = document.createElement('input');
+      const rawValue = o.array[key];
+      const displayValue = length ? sceneToMm(rawValue) : rawValue;
+      i.type = 'number'; i.step = length ? inputNumber(sceneToMm(step ?? 0.01)) : step;
+      if (min != null) i.min = length ? inputNumber(sceneToMm(min)) : min;
+      i.value = inputNumber(displayValue, length ? 3 : 4);
+      i.oninput = () => {
+        let v = parseFloat(i.value);
+        if (!isNaN(v)) {
+          if (int) v = Math.max(min || 1, Math.round(v));
+          o.array[key] = length ? mmToScene(v) : v;
+          rebuildProxies();
+        }
+      };
       i.onchange = pushHistory;
       row.appendChild(i);
     });
@@ -676,9 +736,9 @@ function renderProperties() {
   };
   if (o.array.mode === 'grid') {
     arrRow('個数', ['nx', 'ny', 'nz'].map((key) => ({ key, step: 1, min: 1, int: true })));
-    arrRow('間隔', ['dx', 'dy', 'dz'].map((key) => ({ key, step: 0.05, min: 0 })));
+    arrRow('間隔 mm', ['dx', 'dy', 'dz'].map((key) => ({ key, step: 0.05, min: 0, length: true })));
   } else if (o.array.mode === 'circular') {
-    arrRow('個数/半径', [{ key: 'count', step: 1, min: 1, int: true }, { key: 'radius', step: 0.05, min: 0 }]);
+    arrRow('個数/半径 mm', [{ key: 'count', step: 1, min: 1, int: true }, { key: 'radius', step: 0.05, min: 0, length: true }]);
   }
 }
 
@@ -693,28 +753,29 @@ sdfScene.onChange = () => {
 const MAX_AXIS = 1280; // ストリーミングMCでメモリO(N^2)のため大きめ可(制約は時間)
 const AUTO_CELLS = 200; // 自動モードで最長辺をこのセル数に保つ(密度・速度を一定化)
 function getMeshOpts() {
-  const exportScale = parseFloat($('export-scale').value) || 1000; // scene単位→mm
+  const physicalScale = unitScaleMm();                             // scene単位→mm
+  const exportScale = physicalScale / stlUnitMm();                 // scene単位→STL座標単位
   let voxelMm = parseFloat($('voxel-mm').value) || 1.0;            // 出力mmでのセルサイズ
   // 自動: Boolean後に残る範囲の最長辺からボクセルを算出(セル数を一定に)
   if ($('auto-voxel') && $('auto-voxel').checked && sdfScene.objects.length) {
     const sz = sdfScene.worldBounds().getSize(new THREE.Vector3());
-    const maxMm = Math.max(sz.x, sz.y, sz.z) * exportScale;
+    const maxMm = Math.max(sz.x, sz.y, sz.z) * physicalScale;
     voxelMm = Math.max(maxMm / AUTO_CELLS, 0.001);
     $('voxel-mm').value = +voxelMm.toFixed(3); // 算出値を表示に反映
   }
-  const cellSize = voxelMm / exportScale;                          // scene単位
-  return { cellSize, maxAxis: MAX_AXIS, exportScale, voxelMm };
+  const cellSize = voxelMm / physicalScale;                        // scene単位
+  return { cellSize, maxAxis: MAX_AXIS, exportScale, physicalScale, stlUnit: stlUnit(), voxelMm };
 }
 function updateMeshReadout() {
   const el = $('mesh-readout');
   if (!el) return;
   if (sdfScene.objects.length === 0) { el.textContent = ''; return; }
-  const { cellSize, maxAxis, exportScale, voxelMm } = getMeshOpts();
+  const { cellSize, maxAxis, physicalScale, stlUnit, voxelMm } = getMeshOpts();
   const plan = planMesh(sdfScene, cellSize, maxAxis);
-  const outMm = plan.ext.map((e) => e * exportScale);
+  const outMm = plan.ext.map((e) => e * physicalScale);
   const sizeStr = outMm.map((m) => (m < 10 ? m.toFixed(2) : Math.round(m))).join('×');
-  const actVox = Math.max(...plan.cellUsed.map((c) => c * exportScale));
-  el.textContent = `出力 ${sizeStr}mm / ボクセル ${voxelMm}mm / グリッド ${plan.dims.join('×')}`
+  const actVox = Math.max(...plan.cellUsed.map((c) => c * physicalScale));
+  el.textContent = `出力 ${sizeStr}mm / ボクセル ${voxelMm}mm / STL単位 ${stlUnit} / グリッド ${plan.dims.join('×')}`
     + (plan.clamped ? ` ⚠上限${maxAxis}で粗化(実${actVox.toFixed(2)}mm)` : '');
 }
 
@@ -722,14 +783,23 @@ function updateMeshReadout() {
 function setStatus(m) { $('status').textContent = m; }
 const progress = $('progress'), barFill = $('bar-fill'), progLabel = $('progress-label');
 
-async function handleFile(file) {
+function isGltfAssetFile(file) {
+  return /\.(bin|png|jpe?g|webp|gif|ktx2)$/i.test(file.name);
+}
+
+async function handleFile(file, fileSet = [file]) {
   const buf = await file.arrayBuffer();
   const name = file.name;
   try {
     if (isSDFM(buf)) {
       const data = decodeSDFM(buf);
       sdfScene.loadSerialized(data);
-      if (data.grid && data.grid.cellSize) { grid.setCellSize(data.grid.cellSize); $('grid-cell').value = grid.cellSize; updateLegend(); }
+      if (data.grid) {
+        $('export-scale').value = inputNumber(data.grid.unitScaleMm || DEFAULT_UNIT_SCALE_MM);
+        if (data.grid.stlUnit && $('stl-unit')) $('stl-unit').value = STL_UNIT_MM[data.grid.stlUnit] ? data.grid.stlUnit : 'mm';
+        if (data.grid.cellSize) grid.setCellSize(data.grid.cellSize);
+        syncUnitUi({ refreshProperties: false });
+      }
       select(null); fit();
       resetHistory();
       setStatus(`シーン読込: ${name}（オブジェクト ${data.objects.length}）`);
@@ -739,14 +809,20 @@ async function handleFile(file) {
       pushHistory();
       setStatus(`ボリューム追加: ${v.name}（${v.resolution}³）`);
     } else if (/\.(glb|gltf)$/i.test(name)) {
-      await convertAndAdd(buf, name);
+      await convertAndAdd(buf, name, {
+        assetFiles: /\.gltf$/i.test(name) ? fileSet : [],
+        rootPath: file.webkitRelativePath || name,
+      });
+    } else if (isGltfAssetFile(file)) {
+      // .gltf と同時選択された関連ファイルは GLTFLoader へ渡すだけで、単体では取り込まない。
+      if (!fileSet.some((f) => /\.gltf$/i.test(f.name))) setStatus(`未対応のファイル: ${name}`);
     } else {
       setStatus(`未対応のファイル: ${name}`);
     }
   } catch (err) { console.error(err); setStatus(`エラー: ${err.message}`); }
 }
 
-async function convertAndAdd(buf, name) {
+async function convertAndAdd(buf, name, loadOptions = {}) {
   const resolution = parseInt($('resolution').value, 10);
   const signRays = parseInt($('sign-rays').value, 10);
   progress.classList.remove('hidden'); barFill.style.width = '0%';
@@ -755,6 +831,7 @@ async function convertAndAdd(buf, name) {
   try {
     const v = await convertGLB(buf, {
       resolution, signRays, name: name.replace(/\.(glb|gltf)$/i, ''),
+      ...loadOptions,
       onProgress: (p) => { barFill.style.width = `${(p * 100) | 0}%`; },
     });
     const obj = sdfScene.addVolume(v); select(obj); fit();
@@ -766,7 +843,12 @@ async function convertAndAdd(buf, name) {
   finally { progress.classList.add('hidden'); }
 }
 
-function readFiles(files) { [...files].forEach((f) => handleFile(f)); }
+async function readFiles(files) {
+  const list = [...files];
+  const mainFiles = list.filter((f) => !isGltfAssetFile(f));
+  const targets = mainFiles.length ? mainFiles : list;
+  for (const f of targets) await handleFile(f, list);
+}
 
 // 診断: 距離場の統計とシーン境界をコンソールへ
 function logVolumeDiag(v) {
@@ -936,12 +1018,23 @@ $('open-btn').onclick = () => $('file-input').click();
 $('file-input').onchange = (e) => readFiles(e.target.files);
 $('show-color').onchange = (e) => raymarch.setShowColor(e.target.checked);
 
-function updateLegend() { $('legend').textContent = grid.legend(); }
-$('grid-cell').onchange = (e) => { grid.setCellSize(parseFloat(e.target.value) || 0.1); updateLegend(); };
+function updateLegend() { $('legend').textContent = grid.legend(unitScaleMm()); }
+function syncUnitUi({ refreshProperties = true } = {}) {
+  $('grid-cell').value = inputNumber(sceneToMm(grid.cellSize));
+  updateLegend();
+  updateMeshReadout();
+  if (refreshProperties) refreshList();
+  if (plate.visible) updatePlate();
+}
+$('grid-cell').onchange = (e) => {
+  const mm = parseFloat(e.target.value);
+  grid.setCellSize(mmToScene(Number.isFinite(mm) ? mm : 100));
+  syncUnitUi({ refreshProperties: false });
+};
 $('show-grid').onchange = (e) => { grid.group.visible = e.target.checked; };
 $('show-plate').onchange = (e) => { plate.visible = e.target.checked; if (e.target.checked) updatePlate(); };
 $('tile-cull').onchange = (e) => raymarch.setTileCull(e.target.checked);
-updateLegend();
+syncUnitUi({ refreshProperties: false });
 
 // ギズモ mode
 document.querySelectorAll('[data-gizmo]').forEach((btn) => {
@@ -1029,7 +1122,12 @@ PRIMITIVES.filter((p) => p.category !== 'extra').forEach((p) => {
   const b = document.createElement('button');
   b.className = 'prim'; b.title = p.name;
   b.innerHTML = SVGW(PRIM_ICONS[p.key] || '<rect x="5" y="5" width="14" height="14"/>') + `<span>${p.name}</span>`;
-  b.onclick = () => { const obj = sdfScene.addPrimitive(p.kindId); if (sdfScene.objects.length === 1) fit(); select(obj); pushHistory(); showSizePopup(obj); };
+  b.onclick = () => {
+    const obj = sdfScene.addPrimitive(p.kindId);
+    applyDefaultPrimitiveSize(obj);
+    if (sdfScene.objects.length === 1) fit();
+    select(obj); pushHistory(); showSizePopup(obj);
+  };
   primGrid.appendChild(b);
 });
 
@@ -1041,14 +1139,17 @@ EXTRA_CATALOG.forEach((it) => {
   b.innerHTML = `<span>${it.name}</span>`;
   b.onclick = () => {
     if (it.hinge) { // 一回で左右2片
-      sdfScene.addPrimitive(it.kind, it.params);
+      const leaf1 = sdfScene.addPrimitive(it.kind, it.params);
+      applyDefaultPrimitiveSize(leaf1);
       const leaf2 = sdfScene.addPrimitive(it.kind, it.params);
+      applyDefaultPrimitiveSize(leaf2);
       leaf2.node.rotation.z = Math.PI; leaf2.node.updateMatrixWorld(true);
       if (sdfScene.objects.length <= 2) fit();
       select(leaf2); pushHistory();
       return;
     }
     const obj = sdfScene.addPrimitive(it.kind, it.params);
+    applyDefaultPrimitiveSize(obj);
     if (sdfScene.objects.length === 1) fit();
     select(obj); pushHistory(); showSizePopup(obj);
   };
@@ -1124,7 +1225,7 @@ $('mat-color').dispatchEvent(new Event('input')); // 初期表面色を反映
 $('save-sdfm').onclick = () => {
   if (sdfScene.objects.length === 0) { setStatus('保存するオブジェクトがありません'); return; }
   const s = sdfScene.serialize();
-  const ab = encodeSDFM({ grid: { cellSize: grid.cellSize, unit: 'm' }, objects: s.objects, volumes: s.volumes });
+  const ab = encodeSDFM({ grid: { cellSize: grid.cellSize, unit: 'm', unitScaleMm: unitScaleMm(), stlUnit: stlUnit() }, objects: s.objects, volumes: s.volumes });
   downloadArrayBuffer(ab, 'scene.sdfm');
   setStatus(`シーン保存: scene.sdfm（${(ab.byteLength / 1e6).toFixed(1)}MB）`);
 };
@@ -1206,7 +1307,8 @@ function schedulePreviewRegen() {
     runPreview();
   }, 450);
 }
-$('export-scale').oninput = () => { schedulePreviewRegen(); if (plate.visible) updatePlate(); };
+$('export-scale').oninput = () => { syncUnitUi(); schedulePreviewRegen(); };
+$('stl-unit').onchange = updateMeshReadout;
 $('voxel-mm').oninput = schedulePreviewRegen;
 $('auto-voxel').onchange = () => { $('voxel-mm').disabled = $('auto-voxel').checked; schedulePreviewRegen(); };
 $('voxel-mm').disabled = $('auto-voxel').checked; // 初期: 自動ONなので手動入力は無効
@@ -1222,7 +1324,7 @@ $('export-stl').onclick = async () => {
   progLabel.textContent = 'STL生成中…';
   try {
     const r = await exportSTL(sdfScene, opts, (p) => { barFill.style.width = `${(p * 100) | 0}%`; });
-    setStatus(`STL書き出し: model.stl（三角形 ${r.triangles.toLocaleString()}, グリッド ${r.dims.join('×')}, ボクセル~${opts.voxelMm}mm）`
+    setStatus(`STL書き出し: model.stl（三角形 ${r.triangles.toLocaleString()}, グリッド ${r.dims.join('×')}, ボクセル~${opts.voxelMm}mm, STL単位 ${opts.stlUnit}）`
       + (r.clamped ? ' ⚠上限で粗化' : ''));
   } catch (err) { console.error(err); setStatus(`STLエラー: ${err.message}`); }
   finally { progress.classList.add('hidden'); }

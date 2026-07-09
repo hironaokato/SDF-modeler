@@ -35,11 +35,8 @@ export class SceneGrid {
   }
 
   /** 凡例テキスト */
-  legend() {
-    const c = this.cellSize;
-    const cell = c >= 1 ? `${c} m` : `${(c * 100).toFixed(c * 100 % 1 ? 1 : 0)} cm`;
-    const big = this.cellSize * 10;
-    const major = big >= 1 ? `${big} m` : `${(big * 100).toFixed(0)} cm`;
-    return `細 1マス=${cell} / 太 1マス=${major} / 全体 ${this.span} m`;
+  legend(unitScaleMm = 1000) {
+    const fmt = (mm) => `${Number.parseFloat(mm.toFixed(mm < 10 ? 2 : mm < 100 ? 1 : 0)).toLocaleString()}mm`;
+    return `細 1マス=${fmt(this.cellSize * unitScaleMm)} / 太 1マス=${fmt(this.cellSize * 10 * unitScaleMm)} / 全体 ${fmt(this.span * unitScaleMm)}`;
   }
 }

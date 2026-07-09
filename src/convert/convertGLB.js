@@ -1,12 +1,12 @@
 import { loadGLB } from '../loadGLB.js';
 
 /**
- * GLB ArrayBuffer を SDF VolumeData に変換(複数 Web Worker で Z 分割並列)。
+ * GLB/GLTF ArrayBuffer を SDF VolumeData に変換(複数 Web Worker で Z 分割並列)。
  * @returns {Promise<VolumeData>}
  */
-export function convertGLB(arrayBuffer, { resolution = 128, signRays = 3, name = 'volume', padding = 0.06, onProgress } = {}) {
+export function convertGLB(arrayBuffer, { resolution = 128, signRays = 3, name = 'volume', padding = 0.06, assetFiles = [], rootPath = '', onProgress } = {}) {
   return new Promise((resolve, reject) => {
-    loadGLB(arrayBuffer).then(({ merged, texture }) => {
+    loadGLB(arrayBuffer, { assetFiles, rootPath }).then(({ merged, texture }) => {
       const pos = merged.getAttribute('position');
       const srcPositions = new Float32Array(pos.array);
       const srcIndex = merged.index ? new Uint32Array(merged.index.array) : null;
@@ -61,6 +61,7 @@ export function convertGLB(arrayBuffer, { resolution = 128, signRays = 3, name =
             if (++finished === count && !failed) {
               resolve({
                 name, resolution: res, min, max,
+                modelBounds: { min: [bb.min.x, bb.min.y, bb.min.z], max: [bb.max.x, bb.max.y, bb.max.z] },
                 signed: signRays > 0, hasColor: !!color,
                 distance, color,
                 mesh: { positions: srcPositions, index: srcIndex }, // 高精度メッシュ化用

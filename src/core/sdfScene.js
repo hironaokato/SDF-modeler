@@ -30,6 +30,70 @@ function makeVolumeTextures(renderer, v) {
   return { dist, color };
 }
 
+function validBounds(b) {
+  return b && Array.isArray(b.min) && Array.isArray(b.max)
+    && b.min.length === 3 && b.max.length === 3
+    && b.min.every(Number.isFinite) && b.max.every(Number.isFinite);
+}
+
+function meshModelBounds(mesh) {
+  if (!mesh || !mesh.positions || mesh.positions.length < 3) return null;
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  const p = mesh.positions;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    if (x < min[0]) min[0] = x; if (x > max[0]) max[0] = x;
+    if (y < min[1]) min[1] = y; if (y > max[1]) max[1] = y;
+    if (z < min[2]) min[2] = z; if (z > max[2]) max[2] = z;
+  }
+  return min.every(Number.isFinite) && max.every(Number.isFinite) ? { min, max } : null;
+}
+
+function distanceModelBounds(data) {
+  const res = data.resolution;
+  if (!data.distance || !res || res < 2) return null;
+  const dx = (data.max[0] - data.min[0]) / (res - 1);
+  const dy = (data.max[1] - data.min[1]) / (res - 1);
+  const dz = (data.max[2] - data.min[2]) / (res - 1);
+  const cell = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), 1e-6);
+  const threshold = cell * 0.5;
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  let i = 0, hit = false;
+  for (let z = 0; z < res; z++) {
+    const wz = data.min[2] + z * dz;
+    for (let y = 0; y < res; y++) {
+      const wy = data.min[1] + y * dy;
+      for (let x = 0; x < res; x++, i++) {
+        if (data.distance[i] > threshold) continue;
+        const wx = data.min[0] + x * dx;
+        if (wx < min[0]) min[0] = wx; if (wx > max[0]) max[0] = wx;
+        if (wy < min[1]) min[1] = wy; if (wy > max[1]) max[1] = wy;
+        if (wz < min[2]) min[2] = wz; if (wz > max[2]) max[2] = wz;
+        hit = true;
+      }
+    }
+  }
+  if (!hit) return null;
+  for (let k = 0; k < 3; k++) {
+    min[k] = Math.max(data.min[k], min[k] - cell);
+    max[k] = Math.min(data.max[k], max[k] + cell);
+  }
+  return { min, max };
+}
+
+export function fitVolumeDataBounds(data) {
+  if (!data) return null;
+  if (validBounds(data.modelBounds)) return data.modelBounds;
+  const b = meshModelBounds(data.mesh) || distanceModelBounds(data);
+  if (validBounds(b)) {
+    data.modelBounds = b;
+    return b;
+  }
+  return { min: data.min, max: data.max };
+}
+
 export class SdfObject {
   constructor(kind, name) {
     this.id = _id++;
@@ -265,8 +329,9 @@ export class SdfScene {
   _localBounds(o) {
     const b = new THREE.Box3();
     if (o.isVolume) {
-      b.min.fromArray(o.volume.data.min);
-      b.max.fromArray(o.volume.data.max);
+      const mb = fitVolumeDataBounds(o.volume.data);
+      b.min.fromArray(mb.min);
+      b.max.fromArray(mb.max);
     } else {
       const prim = PRIM_BY_KIND.get(o.kind);
       const r = (prim ? prim.bound(o.params || {}) : 1) || 1;

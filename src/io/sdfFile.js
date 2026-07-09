@@ -10,6 +10,7 @@ const VERSION = 1;
  * @property {number} resolution
  * @property {number[]} min  長さ3
  * @property {number[]} max  長さ3
+ * @property {{min:number[],max:number[]}|null} modelBounds  表示/選択用の実モデル境界
  * @property {boolean} signed
  * @property {boolean} hasColor
  * @property {Float32Array} distance  res^3
@@ -25,6 +26,7 @@ export function encodeSDF(v) {
     resolution: v.resolution,
     min: v.min,
     max: v.max,
+    modelBounds: v.modelBounds || null,
     signed: !!v.signed,
     hasColor: !!(v.hasColor && v.color),
     hasMesh: !!(v.mesh && v.mesh.positions),
@@ -75,6 +77,7 @@ export function decodeSDF(arrayBuffer) {
     resolution: manifest.resolution,
     min: manifest.min,
     max: manifest.max,
+    modelBounds: manifest.modelBounds || null,
     signed: manifest.signed,
     hasColor: !!color,
     distance,
