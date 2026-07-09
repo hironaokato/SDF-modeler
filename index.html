@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDF Modeler</title>
+  <script type="module" crossorigin src="./assets/index-CbE8-go5.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BlhgX3l8.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="drop-overlay" class="hidden"><div class="drop-inner">GLB / GLTF一式 / .sdf / .sdfm をドロップ</div></div>
+  <div id="shader-error" class="hidden"></div>
+  <div id="size-popup" class="hidden"></div>
+
+  <div id="progress" class="hidden">
+    <div class="bar"><div id="bar-fill"></div></div>
+    <div id="progress-label">処理中…</div>
+  </div>
+
+  <!-- 左: 縦タブ + ツール -->
+  <div id="leftdock">
+    <div id="tabs">
+      <button class="tab active" data-tab="file" title="ファイル / 変換">ファイル / 変換</button>
+      <button class="tab" data-tab="model" title="モデリング">モデリング</button>
+      <button class="tab" data-tab="sculpt" title="スカルプト">スカルプト</button>
+      <button class="tab" data-tab="scene" title="シーン">シーン</button>
+    </div>
+
+    <div id="panel">
+      <div class="title">SDF&nbsp;Modeler</div>
+
+      <!-- ファイル / 変換 -->
+      <div id="pane-file" class="pane">
+        <div class="sec">
+          <div class="sh">変換 (GLB→SDF) / 取り込み</div>
+          <div class="g2">
+            <label class="f"><span>解像度</span>
+              <select id="resolution">
+                <option value="32">32³</option><option value="64">64³</option>
+                <option value="128" selected>128³</option><option value="256">256³</option>
+              </select>
+            </label>
+            <label class="f"><span>内外</span>
+              <select id="sign-rays">
+                <option value="3" selected>ソリッド3</option>
+                <option value="5">ソリッド5</option>
+                <option value="0">無符号</option>
+              </select>
+            </label>
+          </div>
+          <button id="open-btn" class="primary">開く / 取り込み</button>
+          <input id="file-input" type="file" accept=".glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.ktx2,.sdf,.sdfm" hidden multiple />
+        </div>
+
+        <div class="sec">
+          <div class="sh">表示</div>
+          <div class="checks">
+            <label class="ck"><input type="checkbox" id="show-color" checked /> カラー</label>
+            <label class="ck"><input type="checkbox" id="show-grid" /> グリッド</label>
+            <label class="ck"><input type="checkbox" id="show-sdf" checked /> SDF</label>
+            <label class="ck"><input type="checkbox" id="show-preview" /> メッシュ</label>
+            <label class="ck"><input type="checkbox" id="wireframe" checked /> ワイヤ</label>
+            <label class="ck"><input type="checkbox" id="show-plate" /> プレート200mm</label>
+            <label class="ck"><input type="checkbox" id="tile-cull" checked /> タイルカリング(実験)</label>
+          </div>
+          <label class="f"><span>グリッド mm</span>
+            <input id="grid-cell" type="number" min="0.1" step="10" value="100" />
+          </label>
+        </div>
+
+        <div class="sec">
+          <div class="sh">メッシュ / STL</div>
+          <label class="f"><span>1単位 mm</span><input id="export-scale" type="number" min="0.0001" step="1" value="1000" /></label>
+          <label class="f"><span>STL読込単位</span>
+            <select id="stl-unit">
+              <option value="mm" selected>mm</option>
+              <option value="cm">cm (Fusion既定)</option>
+              <option value="m">m</option>
+              <option value="in">inch</option>
+            </select>
+          </label>
+          <label class="ck"><input type="checkbox" id="auto-voxel" checked /> ボクセル自動(サイズ連動)</label>
+          <label class="f"><span>ボクセル mm</span><input id="voxel-mm" type="number" min="0.01" step="0.1" value="1.0" /></label>
+          <div id="mesh-readout" class="hint"></div>
+          <div class="row">
+            <button id="preview-mesh">プレビュー</button>
+            <button id="export-stl">STL書出</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sh">保存</div>
+          <div class="row">
+            <button id="save-sdfm" title="シーン保存">.sdfm</button>
+            <button id="save-sdf" title="選択ボリューム保存">.sdf</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- モデリング -->
+      <div id="pane-model" class="pane hidden">
+        <div class="sec">
+          <div class="sh">変形 / ビュー</div>
+          <div class="seg-row">
+            <button data-gizmo="translate" class="seg active" title="移動 (G)">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12M2 8h12M8 2 6.3 3.7M8 2l1.7 1.7M8 14l-1.7-1.7M8 14l1.7-1.7M2 8l1.7-1.7M2 8l1.7 1.7M14 8l-1.7-1.7M14 8l-1.7 1.7"/></svg>移動</button>
+            <button data-gizmo="rotate" class="seg" title="回転 (R)">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12.6 5A5 5 0 1 0 13 8"/><path d="M12.6 1.8v3.4H9.2"/></svg>回転</button>
+            <button data-gizmo="scale" class="seg" title="拡大 (S)">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V3h4M13 9v4H9M3 3l4 4M13 13l-4-4"/></svg>拡大</button>
+          </div>
+          <div class="row">
+            <button id="toggle-ortho" class="seg" title="透視/正投影 (5)">透視投影</button>
+            <button id="frame-sel" title="選択を画角に合わせる (;)">フィット (;)</button>
+          </div>
+          <div class="hint">G/R/S=変形（マウス追従・クリック確定）/ Ctrl+C/V 複製 / Ctrl+Z 取消</div>
+        </div>
+
+        <div class="sec">
+          <div class="sh">プリミティブ追加</div>
+          <div id="prim-grid" class="prim-grid"></div>
+        </div>
+        <div class="sec">
+          <div class="sh">エクストラ プリミティブ</div>
+          <div id="extra-grid" class="prim-grid"></div>
+        </div>
+        <div class="sec">
+          <div class="sh">統合 (ボリュームへベイク)</div>
+          <label class="f"><span>解像度</span>
+            <select id="merge-res">
+              <option value="96">96³</option><option value="128" selected>128³</option>
+              <option value="192">192³</option><option value="256">256³</option>
+            </select>
+          </label>
+          <button id="merge-btn">選択を結合 (無選択は全体)</button>
+          <div class="hint">Boolean結果を1ボリュームに固めて軽量化。元の編集性は失われます。</div>
+        </div>
+      </div>
+
+      <!-- スカルプト -->
+      <div id="pane-sculpt" class="pane hidden">
+        <div class="sec">
+          <div class="sh">スカルプト(選択オブジェクトを彫刻)</div>
+          <label class="f"><span>ベイク解像度</span>
+            <select id="sculpt-res">
+              <option value="96">96³</option><option value="128" selected>128³</option>
+              <option value="192">192³</option><option value="256">256³</option>
+            </select>
+          </label>
+          <div class="row">
+            <button id="sculpt-enter" class="primary">開始</button>
+            <button id="sculpt-exit">終了</button>
+          </div>
+          <div id="sculpt-status" class="hint">プリミティブ/ボリュームを選び「開始」。ボクセル化して彫刻します。</div>
+        </div>
+        <div class="sec">
+          <div class="sh">ブラシ</div>
+          <div class="seg-row" id="brush-type">
+            <button data-brush="draw" class="seg active">盛り</button>
+            <button data-brush="carve" class="seg">削り</button>
+            <button data-brush="smooth" class="seg">均し</button>
+            <button data-brush="move" class="seg">移動</button>
+          </div>
+          <div class="seg-row" id="brush-shape">
+            <button data-shape="round" class="seg active">丸</button>
+            <button data-shape="square" class="seg">四角</button>
+            <button data-shape="cone" class="seg">円錐</button>
+          </div>
+          <label class="f"><span>半径</span><input id="brush-radius" type="range" min="0.01" max="1" step="0.005" value="0.1" /></label>
+          <label class="f"><span>強さ</span><input id="brush-strength" type="range" min="0.05" max="1" step="0.05" value="0.5" /></label>
+          <div class="hint">左=彫刻 / Alt+左 or 中=回転 / 右=パン / ホイール=ズーム / Ctrl+Z 取消</div>
+        </div>
+      </div>
+
+      <!-- シーン -->
+      <div id="pane-scene" class="pane hidden">
+        <div class="sec">
+          <div class="sh">ライティング プリセット</div>
+          <div id="light-presets" class="preset-grid"></div>
+        </div>
+        <div class="sec">
+          <div class="sh">マテリアル / シェーダー</div>
+          <label class="f"><span>表面色</span><input id="mat-color" type="color" value="#e8e8ea" /></label>
+          <label class="f"><span>光沢</span><input id="mat-spec" type="range" min="0" max="0.6" step="0.01" value="0.14" /></label>
+          <label class="f"><span>鋭さ</span><input id="mat-pow" type="range" min="4" max="80" step="1" value="28" /></label>
+          <label class="f"><span>リム</span><input id="mat-rim" type="range" min="0" max="0.4" step="0.01" value="0.06" /></label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右: アウトライナ + プロパティ -->
+  <div id="right">
+    <div id="outliner" class="rpanel">
+      <div class="sh">アウトライナ</div>
+      <div id="object-list" class="scroll"></div>
+    </div>
+    <div id="rsplit" title="ドラッグで高さ調整"></div>
+    <div id="properties" class="rpanel">
+      <div class="sh">プロパティ</div>
+      <div id="prop-body" class="scroll"></div>
+    </div>
+  </div>
+
+  <!-- 下: ステータスバー -->
+  <div id="statusbar">
+    <span id="status">GLB / GLTF一式 / .sdf / .sdfm をドロップしてください。</span>
+    <span id="legend"></span>
+  </div>
+
+</body>
+</html>
